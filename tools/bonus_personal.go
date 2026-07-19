@@ -14,6 +14,7 @@ import (
 func RegisterPersonalBonusTools(s *server.MCPServer, deps Deps) {
 	registerGetBonusPeriods(s, deps)
 	registerGetPersonalBonus(s, deps)
+	registerActivateBonusOffer(s, deps)
 }
 
 // bonusPeriodsResponse matches /mobile-services/bonuspage/v3/metadata.
@@ -33,6 +34,7 @@ type personalBonusResponse struct {
 	BonusGroupOrProducts []struct {
 		Product *struct {
 			WebshopID        int     `json:"webshopId"`
+			OfferID          int     `json:"offerId"`
 			Title            string  `json:"title"`
 			Brand            string  `json:"brand"`
 			SalesUnitSize    string  `json:"salesUnitSize"`
@@ -44,6 +46,7 @@ type personalBonusResponse struct {
 		} `json:"product,omitempty"`
 		BonusGroup *struct {
 			ID                  string  `json:"id"`
+			OfferID             int     `json:"offerId"`
 			SegmentDescription  string  `json:"segmentDescription"`
 			DiscountDescription string  `json:"discountDescription"`
 			ActivationStatus    string  `json:"activationStatus"`
@@ -63,6 +66,20 @@ func fetchBonusPeriods(ctx context.Context, deps Deps) (*bonusPeriodsResponse, e
 	var result bonusPeriodsResponse
 	if err := c.DoRequest(ctx, http.MethodGet, "/mobile-services/bonuspage/v3/metadata", nil, &result); err != nil {
 		return nil, fmt.Errorf("get bonus periods failed: %w", err)
+	}
+	return &result, nil
+}
+
+func fetchPersonalBonus(ctx context.Context, deps Deps, startDate string) (*personalBonusResponse, error) {
+	c, err := deps.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("client error: %w", err)
+	}
+	params := url.Values{}
+	params.Set("bonusStartDate", startDate)
+	var result personalBonusResponse
+	if err := c.DoRequest(ctx, http.MethodGet, "/mobile-services/bonuspage/v1/personal?"+params.Encode(), nil, &result); err != nil {
+		return nil, fmt.Errorf("get personal bonus failed: %w", err)
 	}
 	return &result, nil
 }
@@ -114,7 +131,8 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 				"These are member-specific deals on top of the national bonus (ah_get_bonus_offers). "+
 				"Defaults to the current bonus week; pass bonus_start_date from ah_get_bonus_periods "+
 				"to look ahead to next week. "+
-				"Returns id, title, brand, original_price, bonus_price, bonus_mechanism, activation_status.",
+				"Returns id, offer_id, title, brand, original_price, bonus_price, bonus_mechanism, activation_status. "+
+				"Offers with activation_status NOT_ACTIVATED can be enabled with ah_activate_bonus_offer (pass offer_id).",
 		),
 		mcp.WithString("bonus_start_date",
 			mcp.Description("First day of the bonus week (YYYY-MM-DD) from ah_get_bonus_periods; empty = current week"),
@@ -127,11 +145,6 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 		if err := refreshTokens(ctx, deps); err != nil {
 			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
 		}
-		c, err := deps.GetClient()
-		if err != nil {
-			return errResult(fmt.Sprintf("Client error: %v", err)), nil
-		}
-
 		startDate := req.GetString("bonus_start_date", "")
 		if startDate == "" {
 			periods, err := fetchBonusPeriods(ctx, deps)
@@ -141,17 +154,14 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 			startDate = periods.Periods[0].BonusStartDate
 		}
 
-		params := url.Values{}
-		params.Set("bonusStartDate", startDate)
-		path := "/mobile-services/bonuspage/v1/personal?" + params.Encode()
-
-		var result personalBonusResponse
-		if err := c.DoRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		result, err := fetchPersonalBonus(ctx, deps, startDate)
+		if err != nil {
 			return errResult(fmt.Sprintf("Failed to get personal bonus (bonusStartDate=%s): %v", startDate, err)), nil
 		}
 
 		type item struct {
 			ID               int     `json:"id,omitempty"`
+			OfferID          int     `json:"offer_id,omitempty"`
 			BonusSegmentID   string  `json:"bonus_segment_id,omitempty"`
 			Title            string  `json:"title"`
 			Brand            string  `json:"brand,omitempty"`
@@ -173,6 +183,7 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 				p := e.Product
 				items = append(items, item{
 					ID:               p.WebshopID,
+					OfferID:          p.OfferID,
 					Title:            p.Title,
 					Brand:            p.Brand,
 					Unit:             p.SalesUnitSize,
@@ -186,6 +197,7 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 			if e.BonusGroup != nil {
 				g := e.BonusGroup
 				items = append(items, item{
+					OfferID:          g.OfferID,
 					BonusSegmentID:   g.ID,
 					Title:            g.SegmentDescription,
 					Unit:             g.SalesUnitSize,
@@ -198,5 +210,106 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 			}
 		}
 		return jsonResult(response{BonusStartDate: startDate, Items: items})
+	})
+}
+
+// --- ah_activate_bonus_offer ---
+
+func registerActivateBonusOffer(s *server.MCPServer, deps Deps) {
+	tool := mcp.NewTool("ah_activate_bonus_offer",
+		mcp.WithTitleAnnotation("Albert Heijn: Activate Bonus Box Offer"),
+		mcp.WithDescription(
+			"Activate a personal Bonus Box offer so the discount applies to the member's purchases. "+
+				"Get offer_id from ah_get_personal_bonus (activation_status NOT_ACTIVATED). "+
+				"The bonus week and segment are resolved automatically; pass bonus_start_date only to disambiguate. "+
+				"Activation is idempotent — activating an already-active offer is a no-op.",
+		),
+		mcp.WithString("offer_id",
+			mcp.Required(),
+			mcp.Description("Numeric offer_id from ah_get_personal_bonus"),
+		),
+		mcp.WithString("bonus_start_date",
+			mcp.Description("Bonus week start date (YYYY-MM-DD); empty = search current and next week"),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !deps.IsAuthenticated() {
+			return notAuthResult(), nil
+		}
+		if err := refreshTokens(ctx, deps); err != nil {
+			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
+		}
+		c, err := deps.GetClient()
+		if err != nil {
+			return errResult(fmt.Sprintf("Client error: %v", err)), nil
+		}
+
+		offerID := req.GetInt("offer_id", 0)
+		if offerID == 0 {
+			return errResult("offer_id is required and must be a number"), nil
+		}
+
+		// Resolve the offer's bonus week and segment by scanning the personal
+		// Bonus Box for the requested week, or all published weeks.
+		var dates []string
+		if d := req.GetString("bonus_start_date", ""); d != "" {
+			dates = []string{d}
+		} else {
+			periods, err := fetchBonusPeriods(ctx, deps)
+			if err != nil {
+				return errResult(fmt.Sprintf("Failed to get bonus periods: %v", err)), nil
+			}
+			for _, p := range periods.Periods {
+				dates = append(dates, p.BonusStartDate)
+			}
+		}
+
+		var segmentID, startDate string
+		for _, d := range dates {
+			personal, err := fetchPersonalBonus(ctx, deps, d)
+			if err != nil {
+				continue
+			}
+			for _, e := range personal.BonusGroupOrProducts {
+				if e.BonusGroup != nil && e.BonusGroup.OfferID == offerID {
+					segmentID, startDate = e.BonusGroup.ID, d
+				}
+				if e.Product != nil && e.Product.OfferID == offerID {
+					startDate = d
+				}
+			}
+			if startDate != "" {
+				break
+			}
+		}
+		if startDate == "" {
+			return errResult(fmt.Sprintf("Offer %d not found in the personal Bonus Box for weeks %v", offerID, dates)), nil
+		}
+
+		params := url.Values{}
+		params.Set("segmentId", segmentID)
+		params.Set("startDate", startDate)
+		path := fmt.Sprintf("/mobile-services/bonuspage/v1/activate/%d?%s", offerID, params.Encode())
+
+		// Body must be non-nil: AH's CDN rejects PATCH without Content-Length.
+		var result struct {
+			BonusGroup *struct {
+				OfferID          int    `json:"offerId"`
+				ActivationStatus string `json:"activationStatus"`
+			} `json:"bonusGroup"`
+		}
+		if err := c.DoRequest(ctx, http.MethodPatch, path, map[string]any{}, &result); err != nil {
+			return errResult(fmt.Sprintf("Failed to activate offer %d: %v", offerID, err)), nil
+		}
+
+		status := "ACTIVATED"
+		if result.BonusGroup != nil && result.BonusGroup.ActivationStatus != "" {
+			status = result.BonusGroup.ActivationStatus
+		}
+		return jsonResult(map[string]any{
+			"offer_id":          offerID,
+			"bonus_start_date":  startDate,
+			"activation_status": status,
+		})
 	})
 }
