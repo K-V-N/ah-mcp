@@ -13,7 +13,14 @@ import (
 // RegisterPersonalBonusTools registers the personal Bonus Box tools.
 func RegisterPersonalBonusTools(s *server.MCPServer, deps Deps) {
 	registerGetBonusPeriods(s, deps)
-	registerGetPersonalBonus(s, deps)
+	registerBonusSectionTool(s, deps, "ah_get_personal_bonus", "Albert Heijn: Personal Bonus Box", "personal",
+		"Get the member's personalized Albert Heijn Bonus Box offers for a bonus week. "+
+			"These are member-specific deals on top of the national bonus (ah_get_bonus_offers). "+
+			"See also ah_get_choose_activate_offers for the wider Kies en Activeer selection.")
+	registerBonusSectionTool(s, deps, "ah_get_choose_activate_offers", "Albert Heijn: Kies en Activeer Offers", "choose-and-activate",
+		"Get the member's Albert Heijn 'Kies en Activeer' offers for a bonus week: "+
+			"the full selection of personal offers that can be activated (activation_status ACTIVATABLE), "+
+			"a superset of the Bonus Box shown by ah_get_personal_bonus.")
 	registerActivateBonusOffer(s, deps)
 }
 
@@ -70,7 +77,10 @@ func fetchBonusPeriods(ctx context.Context, deps Deps) (*bonusPeriodsResponse, e
 	return &result, nil
 }
 
-func fetchPersonalBonus(ctx context.Context, deps Deps, startDate string) (*personalBonusResponse, error) {
+// fetchBonusSection retrieves a personalized bonus section ("personal" for the
+// Bonus Box, "choose-and-activate" for Kies en Activeer) for a bonus week.
+// Both endpoints share the same envelope.
+func fetchBonusSection(ctx context.Context, deps Deps, section, startDate string) (*personalBonusResponse, error) {
 	c, err := deps.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("client error: %w", err)
@@ -78,8 +88,8 @@ func fetchPersonalBonus(ctx context.Context, deps Deps, startDate string) (*pers
 	params := url.Values{}
 	params.Set("bonusStartDate", startDate)
 	var result personalBonusResponse
-	if err := c.DoRequest(ctx, http.MethodGet, "/mobile-services/bonuspage/v1/personal?"+params.Encode(), nil, &result); err != nil {
-		return nil, fmt.Errorf("get personal bonus failed: %w", err)
+	if err := c.DoRequest(ctx, http.MethodGet, "/mobile-services/bonuspage/v1/"+section+"?"+params.Encode(), nil, &result); err != nil {
+		return nil, fmt.Errorf("get %s bonus failed: %w", section, err)
 	}
 	return &result, nil
 }
@@ -123,16 +133,15 @@ func registerGetBonusPeriods(s *server.MCPServer, deps Deps) {
 
 // --- ah_get_personal_bonus ---
 
-func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
-	tool := mcp.NewTool("ah_get_personal_bonus",
-		mcp.WithTitleAnnotation("Albert Heijn: Personal Bonus Box"),
+func registerBonusSectionTool(s *server.MCPServer, deps Deps, name, title, section, intro string) {
+	tool := mcp.NewTool(name,
+		mcp.WithTitleAnnotation(title),
 		mcp.WithDescription(
-			"Get the member's personalized Albert Heijn Bonus Box offers for a bonus week. "+
-				"These are member-specific deals on top of the national bonus (ah_get_bonus_offers). "+
+			intro+" "+
 				"Defaults to the current bonus week; pass bonus_start_date from ah_get_bonus_periods "+
 				"to look ahead to next week. "+
 				"Returns id, offer_id, title, brand, original_price, bonus_price, bonus_mechanism, activation_status. "+
-				"Offers with activation_status NOT_ACTIVATED can be enabled with ah_activate_bonus_offer (pass offer_id).",
+				"Non-active offers can be enabled with ah_activate_bonus_offer (pass offer_id).",
 		),
 		mcp.WithString("bonus_start_date",
 			mcp.Description("First day of the bonus week (YYYY-MM-DD) from ah_get_bonus_periods; empty = current week"),
@@ -154,9 +163,9 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 			startDate = periods.Periods[0].BonusStartDate
 		}
 
-		result, err := fetchPersonalBonus(ctx, deps, startDate)
+		result, err := fetchBonusSection(ctx, deps, section, startDate)
 		if err != nil {
-			return errResult(fmt.Sprintf("Failed to get personal bonus (bonusStartDate=%s): %v", startDate, err)), nil
+			return errResult(fmt.Sprintf("Failed to get %s offers (bonusStartDate=%s): %v", section, startDate, err)), nil
 		}
 
 		type item struct {
@@ -219,8 +228,9 @@ func registerActivateBonusOffer(s *server.MCPServer, deps Deps) {
 	tool := mcp.NewTool("ah_activate_bonus_offer",
 		mcp.WithTitleAnnotation("Albert Heijn: Activate Bonus Box Offer"),
 		mcp.WithDescription(
-			"Activate a personal Bonus Box offer so the discount applies to the member's purchases. "+
-				"Get offer_id from ah_get_personal_bonus (activation_status NOT_ACTIVATED). "+
+			"Activate a personal Albert Heijn bonus offer so the discount applies to the member's purchases. "+
+				"Get offer_id from ah_get_personal_bonus or ah_get_choose_activate_offers "+
+				"(activation_status ACTIVATABLE or NOT_ACTIVATED). "+
 				"The bonus week and segment are resolved automatically; pass bonus_start_date only to disambiguate. "+
 				"Activation is idempotent — activating an already-active offer is a no-op.",
 		),
@@ -266,16 +276,21 @@ func registerActivateBonusOffer(s *server.MCPServer, deps Deps) {
 
 		var segmentID, startDate string
 		for _, d := range dates {
-			personal, err := fetchPersonalBonus(ctx, deps, d)
-			if err != nil {
-				continue
-			}
-			for _, e := range personal.BonusGroupOrProducts {
-				if e.BonusGroup != nil && e.BonusGroup.OfferID == offerID {
-					segmentID, startDate = e.BonusGroup.ID, d
+			for _, section := range []string{"choose-and-activate", "personal"} {
+				listing, err := fetchBonusSection(ctx, deps, section, d)
+				if err != nil {
+					continue
 				}
-				if e.Product != nil && e.Product.OfferID == offerID {
-					startDate = d
+				for _, e := range listing.BonusGroupOrProducts {
+					if e.BonusGroup != nil && e.BonusGroup.OfferID == offerID {
+						segmentID, startDate = e.BonusGroup.ID, d
+					}
+					if e.Product != nil && e.Product.OfferID == offerID {
+						startDate = d
+					}
+				}
+				if startDate != "" {
+					break
 				}
 			}
 			if startDate != "" {
@@ -283,7 +298,7 @@ func registerActivateBonusOffer(s *server.MCPServer, deps Deps) {
 			}
 		}
 		if startDate == "" {
-			return errResult(fmt.Sprintf("Offer %d not found in the personal Bonus Box for weeks %v", offerID, dates)), nil
+			return errResult(fmt.Sprintf("Offer %d not found in the personal or Kies en Activeer offers for weeks %v", offerID, dates)), nil
 		}
 
 		params := url.Values{}
