@@ -43,9 +43,14 @@ type personalBonusResponse struct {
 			MainCategory     string  `json:"mainCategory"`
 		} `json:"product,omitempty"`
 		BonusGroup *struct {
-			ID                  string `json:"id"`
-			SegmentDescription  string `json:"segmentDescription"`
-			DiscountDescription string `json:"discountDescription"`
+			ID                  string  `json:"id"`
+			SegmentDescription  string  `json:"segmentDescription"`
+			DiscountDescription string  `json:"discountDescription"`
+			ActivationStatus    string  `json:"activationStatus"`
+			Category            string  `json:"category"`
+			SalesUnitSize       string  `json:"salesUnitSize"`
+			ExampleFromPrice    float64 `json:"exampleFromPrice"`
+			ExampleForPrice     float64 `json:"exampleForPrice"`
 		} `json:"bonusGroup,omitempty"`
 	} `json:"bonusGroupOrProducts"`
 }
@@ -179,10 +184,16 @@ func registerGetPersonalBonus(s *server.MCPServer, deps Deps) {
 				})
 			}
 			if e.BonusGroup != nil {
+				g := e.BonusGroup
 				items = append(items, item{
-					BonusSegmentID: e.BonusGroup.ID,
-					Title:          e.BonusGroup.SegmentDescription,
-					BonusMechanism: e.BonusGroup.DiscountDescription,
+					BonusSegmentID:   g.ID,
+					Title:            g.SegmentDescription,
+					Unit:             g.SalesUnitSize,
+					OriginalPrice:    g.ExampleFromPrice,
+					BonusPrice:       g.ExampleForPrice,
+					BonusMechanism:   g.DiscountDescription,
+					ActivationStatus: g.ActivationStatus,
+					Category:         g.Category,
 				})
 			}
 		}
