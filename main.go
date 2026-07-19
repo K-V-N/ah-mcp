@@ -107,6 +107,7 @@ func main() {
 	tools.RegisterBasketTools(s, deps)
 	tools.RegisterMemberTools(s, deps)
 	tools.RegisterInfoTool(s, deps)
+	tools.RegisterStaplesTools(s, deps)
 
 	ctx := context.Background()
 	appieVer := appieVersion()
