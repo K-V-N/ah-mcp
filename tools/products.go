@@ -132,11 +132,15 @@ func registerGetBonusGroupProducts(s *server.MCPServer, deps Deps) {
 			"Get all individual products belonging to a specific Albert Heijn bonus promotion group. "+
 				"Use this to drill into a deal like '2+1 gratis kaas' or 'Alle yoghurt 25% korting'. "+
 				"Get segment_id from the bonus_segment_id field in ah_get_bonus_offers results. "+
+				"Pass the same bonus_start_date you used there — a group only resolves within its own bonus week. "+
 				"Returns the same fields as ah_search_products.",
 		),
 		mcp.WithString("segment_id",
 			mcp.Required(),
 			mcp.Description("Bonus segment ID from the bonus_segment_id field in ah_get_bonus_offers"),
+		),
+		mcp.WithString("bonus_start_date",
+			mcp.Description("Day inside the bonus week the group belongs to (YYYY-MM-DD); empty = current week"),
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -146,17 +150,17 @@ func registerGetBonusGroupProducts(s *server.MCPServer, deps Deps) {
 		if err := refreshTokens(ctx, deps); err != nil {
 			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
 		}
-		c, err := deps.GetClient()
-		if err != nil {
-			return errResult(fmt.Sprintf("Client error: %v", err)), nil
-		}
 
 		segmentID := req.GetString("segment_id", "")
 		if segmentID == "" {
 			return errResult("segment_id is required"), nil
 		}
 
-		products, err := c.GetBonusGroupProducts(ctx, segmentID)
+		week, err := resolveBonusWeek(ctx, deps, req.GetString("bonus_start_date", ""))
+		if err != nil {
+			return errResult(fmt.Sprintf("Failed to resolve bonus week: %v", err)), nil
+		}
+		products, err := fetchBonusGroupProducts(ctx, deps, segmentID, week)
 		if err != nil {
 			return errResult(fmt.Sprintf("Failed to get bonus group products for %s: %v", segmentID, err)), nil
 		}
@@ -176,21 +180,15 @@ func registerGetBonusGroupProducts(s *server.MCPServer, deps Deps) {
 			it := item{
 				ID:             p.ID,
 				Title:          p.Title,
-				IsBonus:        p.IsBonus,
-				Unit:           p.UnitSize,
-				BonusMechanism: p.BonusMechanism,
+				IsBonus:        true,
+				Unit:           p.SalesUnitSize,
+				BonusMechanism: p.mechanism(),
+				BonusPrice:     p.PriceV2.Now.Amount,
+				Price:          p.PriceV2.Was.Amount,
+				ImageURL:       p.imageURL(),
 			}
-			if p.IsBonus {
-				it.BonusPrice = p.Price.Now
-				it.Price = p.Price.Was
-				if it.Price == 0 {
-					it.Price = p.Price.Now
-				}
-			} else {
-				it.Price = p.Price.Now
-			}
-			if len(p.Images) > 0 {
-				it.ImageURL = p.Images[0].URL
+			if it.Price == 0 {
+				it.Price = p.PriceV2.Now.Amount
 			}
 			results = append(results, it)
 		}
@@ -204,18 +202,25 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 	tool := mcp.NewTool("ah_get_bonus_offers",
 		mcp.WithTitleAnnotation("Albert Heijn: Bonus Offers"),
 		mcp.WithDescription(
-			"Get current Albert Heijn bonus/promotional offers. "+
+			"Get Albert Heijn bonus/promotional offers for a bonus week. "+
 				"Use this (not ah_search_products) when the user asks what is on bonus/sale/discount. "+
+				"Defaults to the running week; for an order delivered in a later week pass that week's "+
+				"bonus_start_date (or any date inside it) — AH publishes next week a few days ahead, "+
+				"see ah_get_bonus_periods. "+
 				"Supports optional keyword filter to find e.g. cheese on bonus: set query='kaas'. "+
 				"Group deals (e.g. '2+1 gratis', 'Alle yoghurt 25% korting') have id=0 and a non-empty bonus_segment_id — "+
-				"pass that to ah_get_bonus_group_products to see the individual products in the group. "+
-				"Returns id, bonus_segment_id, title, original_price, bonus_price, discount_percentage, bonus_mechanism.",
+				"pass that to ah_get_bonus_group_products (with the same bonus_start_date) to see the individual products. "+
+				"Returns bonus_start_date/bonus_end_date of the week plus items with "+
+				"id, bonus_segment_id, title, original_price, bonus_price, discount_percentage, bonus_mechanism.",
 		),
 		mcp.WithString("limit",
 			mcp.Description("Maximum number of results to return (default 20)"),
 		),
 		mcp.WithString("query",
 			mcp.Description("Optional keyword filter (Dutch or English) applied client-side, e.g. 'kaas', 'vlees', 'bier'"),
+		),
+		mcp.WithString("bonus_start_date",
+			mcp.Description("Day inside the bonus week to look at (YYYY-MM-DD), e.g. a start_date from ah_get_bonus_periods or a delivery date; empty = current week"),
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -225,24 +230,13 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 		if err := refreshTokens(ctx, deps); err != nil {
 			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
 		}
-		c, err := deps.GetClient()
-		if err != nil {
-			return errResult(fmt.Sprintf("Client error: %v", err)), nil
-		}
 
 		limit := req.GetInt("limit", 20)
 		query := strings.ToLower(req.GetString("query", ""))
 
-		// GetBonusProducts fetches all categories and fails if any one errors.
-		// Fall back to spotlight (featured deals) on error so the tool always
-		// returns something useful.
-		products, err := c.GetBonusProducts(ctx)
+		week, err := resolveBonusWeek(ctx, deps, req.GetString("bonus_start_date", ""))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] GetBonusProducts failed (%v), falling back to spotlight\n", err)
-			products, err = c.GetSpotlightBonusProducts(ctx)
-			if err != nil {
-				return errResult(fmt.Sprintf("Failed to get bonus products: %v", err)), nil
-			}
+			return errResult(fmt.Sprintf("Failed to resolve bonus week: %v", err)), nil
 		}
 
 		type item struct {
@@ -254,29 +248,85 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 			DiscountPercentage float64 `json:"discount_percentage,omitempty"`
 			BonusMechanism     string  `json:"bonus_mechanism,omitempty"`
 		}
+		type response struct {
+			BonusStartDate string `json:"bonus_start_date"`
+			BonusEndDate   string `json:"bonus_end_date"`
+			Items          []item `json:"items"`
+		}
+
 		results := make([]item, 0)
-		for _, p := range products {
+		seen := make(map[string]bool)
+		add := func(sec *personalBonusResponse) {
+			for _, e := range sec.BonusGroupOrProducts {
+				var it item
+				switch {
+				case e.Product != nil:
+					p := e.Product
+					it = item{
+						ID:             p.WebshopID,
+						Title:          p.Title,
+						OriginalPrice:  p.PriceBeforeBonus,
+						BonusPrice:     p.CurrentPrice,
+						BonusMechanism: p.BonusMechanism,
+					}
+				case e.BonusGroup != nil:
+					g := e.BonusGroup
+					it = item{
+						BonusSegmentID: g.ID,
+						Title:          g.SegmentDescription,
+						OriginalPrice:  g.ExampleFromPrice,
+						BonusPrice:     g.ExampleForPrice,
+						BonusMechanism: g.DiscountDescription,
+					}
+				default:
+					continue
+				}
+				// Categories overlap, and group deals carry no product ID.
+				key := fmt.Sprintf("%d:%s:%s", it.ID, it.BonusSegmentID, it.Title)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				// Client-side keyword filter when query is set.
+				if query != "" && !strings.Contains(strings.ToLower(it.Title), query) {
+					continue
+				}
+				if it.OriginalPrice > 0 && it.BonusPrice > 0 {
+					it.DiscountPercentage = (1 - it.BonusPrice/it.OriginalPrice) * 100
+				}
+				results = append(results, it)
+			}
+		}
+
+		// One request per category; skip the ones that fail rather than losing
+		// the whole week, and fall back to spotlight (featured deals) if that
+		// leaves nothing at all.
+		for _, category := range week.Categories {
 			if len(results) >= limit {
 				break
 			}
-			// Client-side keyword filter when query is set.
-			if query != "" && !strings.Contains(strings.ToLower(p.Title), query) {
+			section, err := fetchNationalSection(ctx, deps, week.StartDate, category)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] bonus category %q failed: %v\n", category, err)
 				continue
 			}
-			it := item{
-				ID:             p.ID,
-				BonusSegmentID: p.BonusSegmentID,
-				Title:          p.Title,
-				OriginalPrice:  p.Price.Was,
-				BonusPrice:     p.Price.Now,
-				BonusMechanism: p.BonusMechanism,
-			}
-			if p.Price.Was > 0 && p.Price.Now > 0 {
-				it.DiscountPercentage = (1 - p.Price.Now/p.Price.Was) * 100
-			}
-			results = append(results, it)
+			add(section)
 		}
-		return jsonResult(results)
+		if len(results) == 0 {
+			section, err := fetchSpotlightSection(ctx, deps, week.StartDate)
+			if err != nil {
+				return errResult(fmt.Sprintf("Failed to get bonus products for %s: %v", week.StartDate, err)), nil
+			}
+			add(section)
+		}
+		if len(results) > limit {
+			results = results[:limit]
+		}
+		return jsonResult(response{
+			BonusStartDate: week.StartDate,
+			BonusEndDate:   week.EndDate,
+			Items:          results,
+		})
 	})
 }
 

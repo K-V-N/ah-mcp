@@ -24,11 +24,19 @@ func RegisterPersonalBonusTools(s *server.MCPServer, deps Deps) {
 	registerActivateBonusOffer(s, deps)
 }
 
-// bonusPeriodsResponse matches /mobile-services/bonuspage/v3/metadata.
+// bonusPeriodsResponse matches /mobile-services/bonuspage/v3/metadata. Each
+// period carries the tabs the bonus of that week is split into; the NATIONAL
+// entries name the categories resolveBonusWeek fetches.
 type bonusPeriodsResponse struct {
 	Periods []struct {
 		BonusStartDate string `json:"bonusStartDate"`
 		BonusEndDate   string `json:"bonusEndDate"`
+		Tabs           []struct {
+			URLMetadataList []struct {
+				BonusType   string `json:"bonusType"`
+				Description string `json:"description"`
+			} `json:"urlMetadataList"`
+		} `json:"tabs"`
 	} `json:"periods"`
 }
 
