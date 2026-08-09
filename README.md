@@ -86,7 +86,7 @@ Requires Go 1.23+.
 | `AH_CALLBACK_HOST` | `http://localhost:9876` | Base URL for the OAuth proxy. Users open this URL in their browser during login. Override to your server's public URL for remote deployments. |
 | `AH_CALLBACK_PORT` | `9876` | Port the temporary OAuth reverse-proxy server listens on. |
 | `AH_MCP_PORT` | `3000` | Port for the MCP HTTP server (`--transport sse` or `--transport streamable-http`). |
-| `AH_MCP_BASE_URL` | `http://localhost:3000` | Public base URL advertised to MCP clients. **Must be set for remote deployments** — otherwise clients receive a `localhost` URL they cannot reach. Example: `https://myserver.example.com` |
+| `AH_MCP_BASE_URL` | `http://localhost:3000` | Public base URL advertised to MCP clients. **Must be set for remote deployments** — otherwise clients receive a `localhost` URL they cannot reach. Example: `https://ah-mcp.tl2.nl` |
 | `AH_TOKENS_PATH` | `~/.config/ah-mcp/tokens.json` | Override the XDG token storage path. Directory is created automatically (mode `0700`). File is written with mode `0600`. |
 | `AH_REMOTE` | `false` | Set to `true` to enable remote mode (same as `--remote` flag). Disables automatic browser opening on login. |
 | `AH_MCP_TOKEN` | *(unset)* | Secret token required to access the SSE server. When set, all requests must supply it via `Authorization: Bearer <token>` header or `?token=<token>` query parameter. Strongly recommended for public deployments. |
@@ -124,7 +124,7 @@ Assistant: calls ah_login  ← browser opens automatically
 User: log in to ah
 Assistant: calls ah_login
 → "Please open this URL in your browser to log in to Albert Heijn:
-   https://ah-mcp.example.com/login?..."
+   https://ah-mcp.tl2.nl/login?..."
 → (complete login in browser)
 → (call ah_login again)
 → "Login successful! Connected as Jan Jansen."
@@ -143,7 +143,7 @@ Streamable HTTP uses regular HTTP requests instead of a persistent SSE connectio
    ./ah-mcp --transport streamable-http --remote
    ```
 2. Open Claude → Settings → Connections → Add custom MCP server.
-3. Paste the URL: `https://your-server/mcp?token=your-secret-token`
+3. Paste the URL: `https://ah-mcp.tl2.nl/mcp?token=your-secret-token`
 
 ### Claude.ai (web) — SSE (legacy)
 
@@ -208,8 +208,8 @@ Add to your MCP config (usually `~/.codeium/windsurf/mcp_config.json` or `~/.cur
    ```
 3. Create `/home/ah-mcp/.env`:
    ```env
-   AH_CALLBACK_HOST=https://ah-mcp.example.com
-   AH_MCP_BASE_URL=https://ah-mcp.example.com
+   AH_CALLBACK_HOST=https://ah-mcp.tl2.nl
+   AH_MCP_BASE_URL=https://ah-mcp.tl2.nl
    AH_MCP_PORT=3000
    AH_REMOTE=true
    AH_MCP_TOKEN=your-secret-token-here
@@ -220,7 +220,13 @@ Add to your MCP config (usually `~/.codeium/windsurf/mcp_config.json` or `~/.cur
    sudo systemctl daemon-reload
    sudo systemctl enable --now ah-mcp
    ```
-5. Put a reverse proxy (nginx, Caddy) in front to handle TLS.
+5. Put a reverse proxy (nginx, Caddy) in front to handle TLS. With Caddy this is a two-line `Caddyfile` — certificates for the domain are obtained and renewed automatically:
+   ```
+   ah-mcp.tl2.nl {
+       reverse_proxy localhost:3000
+   }
+   ```
+   DNS: point an `A`/`AAAA` record for `ah-mcp.tl2.nl` at the server before starting the proxy, so the certificate challenge can succeed.
 
 Tokens are stored automatically at `/home/ah-mcp/.config/ah-mcp/tokens.json` — no `AH_TOKENS_PATH` override needed.
 
