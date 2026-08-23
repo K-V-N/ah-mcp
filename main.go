@@ -75,6 +75,7 @@ func main() {
 		"Albert Heijn",
 		version,
 		server.WithLogging(),
+		server.WithInstructions(serverInstructions),
 	)
 
 	// Build dependency bundle.
@@ -273,3 +274,17 @@ func simpleAuthMiddleware(token string, next http.Handler) http.Handler {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	})
 }
+
+// serverInstructions orients the client before it picks a tool. Keep it short:
+// it is sent on every session, and per-tool descriptions carry the detail.
+const serverInstructions = `Albert Heijn account of the logged-in member: products, bonus, shopping list, cart and orders.
+
+Bonus weeks run Monday-Sunday. AH publishes NEXT week's bonus a few days ahead (usually from the
+Friday before), and this server can read it in full - national bonus, Bonus Box and Kies en Activeer.
+Call ah_get_bonus_periods to see which weeks are published (label "current" / "next"), then pass the
+week's start_date - or any date inside it, such as a delivery date - to ah_get_bonus_offers,
+ah_get_bonus_group_products, ah_get_personal_bonus or ah_get_choose_activate_offers. Omitting the
+date always means the running week, so an order delivered next week must be planned with the date
+passed explicitly. Never say next week's bonus is unavailable without checking ah_get_bonus_periods.
+
+Prices are euros. Dates are Europe/Amsterdam calendar dates (YYYY-MM-DD).`

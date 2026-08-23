@@ -109,9 +109,12 @@ func registerGetBonusPeriods(s *server.MCPServer, deps Deps) {
 		mcp.WithTitleAnnotation("Albert Heijn: Bonus Periods"),
 		mcp.WithDescription(
 			"Get the Albert Heijn bonus weeks (periods), current week first. "+
-				"When AH has published next week's bonus (typically a few days before it starts) "+
-				"a second entry is present — pass its start_date to ah_get_personal_bonus to look ahead. "+
-				"Returns start_date and end_date per period (YYYY-MM-DD).",
+				"AH publishes NEXT week's bonus a few days ahead (usually from the Friday before): "+
+				"when it is available a second entry with label=\"next\" is present, and its offers "+
+				"can already be read in full — pass its start_date to ah_get_bonus_offers (national bonus), "+
+				"ah_get_personal_bonus or ah_get_choose_activate_offers. Do this whenever an order is "+
+				"delivered in a later week: plan it against that week's bonus, not the running one. "+
+				"Returns label (current/next), start_date and end_date per period (YYYY-MM-DD).",
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -128,12 +131,22 @@ func registerGetBonusPeriods(s *server.MCPServer, deps Deps) {
 		}
 
 		type period struct {
+			Label     string `json:"label"`
 			StartDate string `json:"start_date"`
 			EndDate   string `json:"end_date"`
 		}
 		periods := make([]period, 0, len(result.Periods))
-		for _, p := range result.Periods {
-			periods = append(periods, period{StartDate: p.BonusStartDate, EndDate: p.BonusEndDate})
+		for i, p := range result.Periods {
+			// AH lists the running week first, then any already-published
+			// later weeks. Label them so the lookahead is obvious.
+			label := fmt.Sprintf("+%d weeks", i)
+			switch i {
+			case 0:
+				label = "current"
+			case 1:
+				label = "next"
+			}
+			periods = append(periods, period{Label: label, StartDate: p.BonusStartDate, EndDate: p.BonusEndDate})
 		}
 		return jsonResult(periods)
 	})
