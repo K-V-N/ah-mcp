@@ -1,0 +1,81 @@
+{
+  "basket": {
+    "itemsInOrder": [
+      {
+        "quantity": 4,
+        "allocatedQuantity": 0,
+        "isClosed": false,
+        "originCode": "PRD",
+        "product": {
+          "id": 171607,
+          "title": "Coca-Cola Zero sugar zero caffeïne",
+          "availability": {
+            "isOrderable": true,
+            "isVisible": true,
+            "availabilityLabel": "Maximaal 8 stuks",
+            "maxUnits": 8,
+            "online": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "offline": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "unavailableForOrder": null
+          }
+        }
+      },
+      {
+        "quantity": 1,
+        "allocatedQuantity": 0,
+        "isClosed": false,
+        "originCode": "PRD",
+        "product": {
+          "id": 605946,
+          "title": "Venco Dropsport",
+          "availability": {
+            "isOrderable": true,
+            "isVisible": true,
+            "availabilityLabel": null,
+            "maxUnits": null,
+            "online": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "offline": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "unavailableForOrder": null
+          }
+        }
+      },
+      {
+        "quantity": 1,
+        "allocatedQuantity": 0,
+        "isClosed": false,
+        "originCode": "PRD",
+        "product": {
+          "id": 167873,
+          "title": "AH Terra Kikkererwten",
+          "availability": {
+            "isOrderable": true,
+            "isVisible": true,
+            "availabilityLabel": null,
+            "maxUnits": null,
+            "online": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "offline": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "unavailableForOrder": null
+          }
+        }
+      }
+    ]
+  }
+}
