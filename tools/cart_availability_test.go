@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// basket_available.json is trimmed from a live REOPENED order (2026-09-27).
-// Every item in it was available; one carries the order-limit label.
-func TestBasketAvailability_LiveAllAvailable(t *testing.T) {
-	data, err := os.ReadFile("testdata/basket_available.json")
+// basket_live.json is trimmed from a live REOPENED order (2026-09-27).
+// 160707 (AH Spinazie grootverpakking) showed as "Tijdelijk uitverkocht" in
+// the app; the rest were available, 171607 with the order-limit label.
+func TestBasketAvailability_Live(t *testing.T) {
+	data, err := os.ReadFile("testdata/basket_live.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,22 +19,23 @@ func TestBasketAvailability_LiveAllAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := parseBasketAvailability(resp)
-	if len(got) != 3 {
-		t.Fatalf("got %d verdicts, want 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("got %d verdicts, want 4", len(got))
 	}
-	for id, av := range got {
-		if !av.Available {
-			t.Errorf("product %d: want available, got %+v", id, av)
+	for _, id := range []int{171607, 605946, 167873} {
+		if !got[id].Available {
+			t.Errorf("product %d: want available, got %+v", id, got[id])
 		}
 	}
-	// "Maximaal 8 stuks" is an order limit, not unavailability.
-	if !got[171607].Available {
-		t.Error("order-limit label must not mark an item unavailable")
+	// online.status stays AVAILABLE for the sold-out item; only
+	// unavailableForOrder and isOrderable give it away.
+	sp := got[160707]
+	if sp.Available || sp.Reason != "SOLD_OUT" || sp.Label != "Tijdelijk uitverkocht" {
+		t.Errorf("spinach: want unavailable SOLD_OUT / Tijdelijk uitverkocht, got %+v", sp)
 	}
 }
 
-// The cases below are not captured from AH (no unavailable item has been
-// seen live yet); they check the rule on the schema's own fields.
+// Edge cases of the rule beyond what the live capture covers.
 func TestJudgeAvailability(t *testing.T) {
 	yes, no := true, false
 	avail := &availabilityIndication{Status: "AVAILABLE"}

@@ -75,6 +75,34 @@
             "unavailableForOrder": null
           }
         }
+      },
+      {
+        "quantity": 1,
+        "allocatedQuantity": 0,
+        "isClosed": false,
+        "originCode": "PRD",
+        "product": {
+          "id": 160707,
+          "title": "AH Spinazie grootverpakking",
+          "availability": {
+            "isOrderable": false,
+            "isVisible": true,
+            "availabilityLabel": "Tijdelijk uitverkocht",
+            "maxUnits": null,
+            "online": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "offline": {
+              "status": "AVAILABLE",
+              "availableFrom": null
+            },
+            "unavailableForOrder": {
+              "status": "SOLD_OUT",
+              "availableFrom": null
+            }
+          }
+        }
       }
     ]
   }

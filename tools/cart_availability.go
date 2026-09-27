@@ -12,18 +12,23 @@ import (
 // Slot-level availability of the items in the active order.
 //
 // Source: the GraphQL basket (the query behind the app's cart screen), whose
-// items carry Product.availability. Field names come from AH's GraphQL
-// schema, and the known-good values were captured from a live REOPENED order
-// (see testdata/basket_available.json):
+// items carry Product.availability. Captured from a live REOPENED order (see
+// testdata/basket_live.json):
 //
-//	isOrderable: true, online.status: "AVAILABLE", unavailableForOrder: null
+//	available:  isOrderable true,  unavailableForOrder null
+//	sold out:   isOrderable false, unavailableForOrder {status: "SOLD_OUT"},
+//	            availabilityLabel "Tijdelijk uitverkocht"
 //
-// An item counts as available only when it shows exactly those values. Any
+// online.status stayed "AVAILABLE" for the sold-out item, as did
+// availableOnline on the REST summary, and the REST order-details endpoint
+// reported it IN_ASSORTMENT/orderable. Neither is usable for this.
+//
+// An item counts as available only when it shows the known-good values. Any
 // deviation marks it unavailable and passes AH's own value through as the
 // reason, so an unfamiliar enum value is reported rather than hidden.
 //
-// availabilityLabel is deliberately not a signal: live data shows it carries
-// order limits too ("Maximaal 8 stuks") on perfectly available items.
+// availabilityLabel is deliberately not a signal on its own: it also carries
+// order limits ("Maximaal 8 stuks") on available items.
 //
 // allocatedQuantity is not used either: it is 0 for every item until AH
 // allocates stock after the order closes.
@@ -108,11 +113,10 @@ func parseBasketAvailability(resp basketAvailabilityResponse) map[int]itemAvaila
 			continue
 		}
 		out[it.Product.ID] = av
-		if !av.Available {
-			// Log the raw fields: no unavailable item has been captured yet, so
-			// the first real one is worth keeping.
+		if !av.Available && av.Reason != "SOLD_OUT" {
+			// Log reasons not seen live yet, with the raw fields.
 			raw, _ := json.Marshal(it.Product.Availability)
-			fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] cart item %d unavailable: %s\n", it.Product.ID, raw)
+			fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] cart item %d unavailable (%s): %s\n", it.Product.ID, av.Reason, raw)
 		}
 	}
 	return out
