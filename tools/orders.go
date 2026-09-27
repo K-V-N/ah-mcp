@@ -571,6 +571,11 @@ func registerGetCart(s *server.MCPServer, deps Deps) {
 			"View the current Albert Heijn online shopping cart (active order). "+
 				"Returns the order state, all items with names and quantities, "+
 				"total price, and total discount. "+
+				"Each item has 'available': false means AH can't deliver it in this "+
+				"order (the app's 'Niet leverbaar'), with AH's unavailable_reason and, "+
+				"if known, available_from. The 'unavailable' list collects those items. "+
+				"If availability_checked is false, availability is unknown — do not "+
+				"assume items are in stock. "+
 				"Use ah_update_cart_item or ah_remove_from_cart to modify items.",
 		),
 	)
@@ -592,34 +597,76 @@ func registerGetCart(s *server.MCPServer, deps Deps) {
 		}
 
 		type cartItem struct {
-			ProductID int     `json:"product_id"`
-			Name      string  `json:"name,omitempty"`
-			Quantity  int     `json:"quantity"`
-			Price     float64 `json:"price,omitempty"`
+			ProductID     int     `json:"product_id"`
+			Name          string  `json:"name,omitempty"`
+			Quantity      int     `json:"quantity"`
+			Price         float64 `json:"price,omitempty"`
+			Available     *bool   `json:"available,omitempty"`
+			Reason        string  `json:"unavailable_reason,omitempty"`
+			Label         string  `json:"unavailable_label,omitempty"`
+			AvailableFrom string  `json:"available_from,omitempty"`
+		}
+		type unavailableItem struct {
+			ProductID     int    `json:"product_id"`
+			Name          string `json:"name,omitempty"`
+			Quantity      int    `json:"quantity"`
+			Reason        string `json:"reason"`
+			AvailableFrom string `json:"available_from,omitempty"`
 		}
 		type cartResult struct {
-			ID            string     `json:"id"`
-			State         string     `json:"state"`
-			Items         []cartItem `json:"items"`
-			TotalPrice    float64    `json:"total_price"`
-			TotalDiscount float64    `json:"total_discount,omitempty"`
+			ID                  string            `json:"id"`
+			State               string            `json:"state"`
+			Items               []cartItem        `json:"items"`
+			Unavailable         []unavailableItem `json:"unavailable"`
+			AvailabilityChecked bool              `json:"availability_checked"`
+			AvailabilityNote    string            `json:"availability_note,omitempty"`
+			TotalPrice          float64           `json:"total_price"`
+			TotalDiscount       float64           `json:"total_discount,omitempty"`
 		}
+
+		avail, availErr := fetchBasketAvailability(ctx, c)
+
 		items := make([]cartItem, 0, len(order.Items))
+		unavailable := []unavailableItem{}
+		unknown := 0
 		for _, it := range order.Items {
 			ci := cartItem{ProductID: it.ProductID, Quantity: it.Quantity}
 			if it.Product != nil {
 				ci.Name = it.Product.Title
 				ci.Price = it.Product.Price.Now
 			}
+			if av, ok := avail[it.ProductID]; ok {
+				ci.Available = &av.Available
+				ci.Reason, ci.Label, ci.AvailableFrom = av.Reason, av.Label, av.AvailableFrom
+				if !av.Available {
+					unavailable = append(unavailable, unavailableItem{
+						ProductID: ci.ProductID, Name: ci.Name, Quantity: ci.Quantity,
+						Reason: av.Reason, AvailableFrom: av.AvailableFrom,
+					})
+				}
+			} else {
+				unknown++
+			}
 			items = append(items, ci)
 		}
-		return jsonResult(cartResult{
+
+		out := cartResult{
 			ID:            order.ID,
 			State:         order.State,
 			Items:         items,
+			Unavailable:   unavailable,
 			TotalPrice:    order.TotalPrice,
 			TotalDiscount: order.TotalDiscount,
-		})
+		}
+		switch {
+		case availErr != nil:
+			out.AvailabilityNote = fmt.Sprintf("availability lookup failed: %v", availErr)
+		case unknown > 0:
+			out.AvailabilityNote = fmt.Sprintf("no availability data for %d item(s); those have no 'available' field", unknown)
+		default:
+			out.AvailabilityChecked = true
+		}
+		return jsonResult(out)
 	})
 }
 
